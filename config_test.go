@@ -82,7 +82,7 @@ func TestLoadConfigFixture(t *testing.T) {
 // loadable. Users are expected to edit it, so no exact values are asserted.
 
 func TestShippedConfigParses(t *testing.T) {
-	cfg, err := LoadConfig("../config.yaml")
+	cfg, err := LoadConfig("config.yaml")
 	if errors.Is(err, os.ErrNotExist) {
 		t.Skip("no config.yaml in the repo root")
 	}

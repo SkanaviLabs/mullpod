@@ -1,4 +1,4 @@
-module github.com/SkanaviLabs/mullpod/router
+module github.com/SkanaviLabs/mullpod
 
 go 1.24
 

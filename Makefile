@@ -7,14 +7,14 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 	@echo "Missing .env: cp .env.example .env and fill in the WireGuard key/address"; exit 1
 
 build:
-	cd router && CGO_ENABLED=0 go build -trimpath -ldflags "-X main.version=$(VERSION)" -o ../$(BIN) .
+	CGO_ENABLED=0 go build -trimpath -ldflags "-X main.version=$(VERSION)" -o $(BIN) .
 
 run: .env build  ## foreground; Ctrl-C stops it
 	./$(BIN)
 
 test:
-	@cd router && test -z "$$(gofmt -l .)" || { echo "gofmt needed:"; gofmt -l .; exit 1; }
-	cd router && go vet ./... && go test -race -count=1 -cover ./...
+	@test -z "$$(gofmt -l .)" || { echo "gofmt needed:"; gofmt -l .; exit 1; }
+	go vet ./... && go test -race -count=1 -cover ./...
 
 verify:  ## live checks against a running instance (make run in another terminal)
 	./scripts/verify.sh

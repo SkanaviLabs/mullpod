@@ -10,5 +10,4 @@ __pycache__/
 bin/
 data/
 .idea/
-/router/mullpod
-/router/router
+/mullpod

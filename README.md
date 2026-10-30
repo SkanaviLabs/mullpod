@@ -328,7 +328,7 @@ curl -s -o /dev/null -w '%{speed_download}\n' -x http://de-fra_t:x@127.0.0.1:809
 
 ## Develop
 
-`make build` writes `bin/mullpod`; `go install github.com/SkanaviLabs/mullpod/router@latest`
+`make build` writes `bin/mullpod`; `go install github.com/SkanaviLabs/mullpod@latest`
 installs it into `$GOBIN` instead. The binary still reads `.env` and `config.yaml` from the
 working directory.
 
