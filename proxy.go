@@ -20,6 +20,12 @@ import (
 
 const idleTimeout = 2 * time.Minute
 
+// Limits on reading a request body that is answered with 407.
+const (
+	authDrainTimeout = time.Second
+	authDrainMax     = 64 << 10
+)
+
 // Server is one listener. Every listener speaks both HTTP proxy and SOCKS5,
 // told apart by the first byte the client sends.
 type Server struct {
@@ -123,16 +129,17 @@ func (s *Server) serveHTTP(c net.Conn, br *bufio.Reader) {
 
 		user, pass, hasCreds := proxyAuth(req.Header.Get("Proxy-Authorization"))
 		if (s.cfg.Password != "" && (!hasCreds || pass != s.cfg.Password)) || (!hasCreds && s.ln.Challenge) {
-			io.Copy(io.Discard, req.Body)
-			req.Body.Close()
+			// Close after the 407 so an unauthenticated client can't hold the
+			// connection open by streaming a body. A short, bounded drain keeps
+			// unread request bytes from turning the close into a reset that
+			// destroys the 407 before the client reads it.
 			writeStatus(c, http.StatusProxyAuthRequired,
 				"Proxy username selects the exit: http://<exit>[_<session>]:x@host:port (e.g. de-fra_s1). "+
 					"Ports without credentials: see /exits on the control API.",
-				"Proxy-Authenticate", `Basic realm="mullpod"`)
-			if req.Close {
-				return
-			}
-			continue
+				"Proxy-Authenticate", `Basic realm="mullpod"`, "Connection", "close")
+			c.SetReadDeadline(time.Now().Add(authDrainTimeout))
+			io.CopyN(io.Discard, req.Body, authDrainMax)
+			return
 		}
 
 		if req.Method == http.MethodConnect {

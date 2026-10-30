@@ -32,20 +32,45 @@ func TestHandlePeekError(t *testing.T) {
 	(&Server{cfg: &Config{}, m: &Metrics{}}).handle(c1)
 }
 
-func TestServeHTTPChallengeContinues(t *testing.T) {
+func TestServeHTTPChallengeCloses(t *testing.T) {
 	c1, c2 := net.Pipe()
 	s := &Server{cfg: &Config{}, ln: Listener{Challenge: true}, m: &Metrics{}}
-	go s.serveHTTP(c2, bufio.NewReader(c2))
+	done := make(chan struct{})
+	go func() { s.serveHTTP(c2, bufio.NewReader(c2)); c2.Close(); close(done) }()
 
-	req := "GET http://example.com/ HTTP/1.1\r\nHost: example.com\r\n\r\n"
-	io.WriteString(c1, req+req)
-	br := bufio.NewReader(c1)
-	for i := 0; i < 2; i++ {
-		resp, err := http.ReadResponse(br, nil)
-		if err != nil || resp.StatusCode != 407 {
-			t.Fatalf("response %d: %v", i, err)
+	go io.WriteString(c1, "GET http://example.com/ HTTP/1.1\r\nHost: example.com\r\n\r\n")
+	resp, err := http.ReadResponse(bufio.NewReader(c1), nil)
+	if err != nil || resp.StatusCode != 407 || !resp.Close {
+		t.Fatalf("want 407 with Connection: close, got %v %v", resp, err)
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("connection kept open after 407")
+	}
+}
+
+// An unauthenticated client streaming an endless body must not hold the connection.
+func TestServeHTTPChallengeEndlessBody(t *testing.T) {
+	c1, c2 := net.Pipe()
+	s := &Server{cfg: &Config{Password: "pw"}, m: &Metrics{}}
+	done := make(chan struct{})
+	go func() { s.serveHTTP(c2, bufio.NewReader(c2)); c2.Close(); close(done) }()
+
+	go func() {
+		io.WriteString(c1, "POST http://example.com/ HTTP/1.1\r\nHost: example.com\r\nTransfer-Encoding: chunked\r\n\r\n")
+		chunk := "400\r\n" + strings.Repeat("x", 0x400) + "\r\n"
+		for {
+			if _, err := io.WriteString(c1, chunk); err != nil {
+				return
+			}
 		}
-		resp.Body.Close()
+	}()
+	go io.Copy(io.Discard, c1)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("endless body kept the connection open")
 	}
 	c1.Close()
 }
