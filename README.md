@@ -227,9 +227,11 @@ client → 127.0.0.1 → mullpod ─ in-process WireGuard tunnel → entry serve
   requests fail at once with `503`, and no exit server is blamed.
 - **Entry server:** chosen from `tunnel.entry`, a Mullvad code such as `us-mia`, `se` or
   `de-fra-wg-001`. Pick one near you.
-- **Tunnel health:** probes `10.64.0.1:1080` every 10 s. After 3 failures in a row it moves
-  to another entry server matching `tunnel.entry`. `POST /tunnel/switch` moves it by hand.
-- **Relay list:** loaded from the Mullvad API, cached in `data/relays.json`, and refreshed
+- **Tunnel health:** probes `10.64.0.1:1080` (Mullvad's internal DNS/proxy endpoint,
+  reachable from any tunnel) every 10 s. After 3 failures in a row it moves to another
+  entry server matching `tunnel.entry`. `POST /tunnel/switch` moves it by hand.
+- **Relay list:** loaded from the Mullvad API, cached in `data/relays.json`
+  (`catalog.cache`; set it to `""` to keep the list in memory only), and refreshed
   through the tunnel every 6 h. The entry server's WireGuard key and IP come from this list,
   so on the very first run (no cache) it's fetched once over the normal network
   (`tunnel.bootstrap_direct`).

@@ -32,7 +32,7 @@ listeners:
   - { name: gb, addr: "127.0.0.1:8082", exit: gb, session: port-gb }
   - { name: de, addr: "127.0.0.1:8083", exit: de, session: port-de }
   - { name: jp, addr: "127.0.0.1:8084", exit: jp, session: port-jp }
-  # IPv6 examples (commented out). Bracket the host; the port stays outside:
+  # IPv6 examples, uncomment if needed
   # - { name: main6, addr: "[::1]:8090", challenge: true }     # IPv6 loopback
   # - { name: lan6,  addr: "[fd00::10]:8081", exit: de }        # a specific interface
   # - { name: dual,  addr: "[2001:db8::20]:8085", exit: jp }
@@ -99,9 +99,17 @@ breaker:
 catalog:
   url: https://api.mullvad.net/www/relays/wireguard/   # source of the relay list
   refresh: 6h                                         # refresh interval once up
-  cache: data/relays.json                             # on-disk cache, relative to the working directory
+  # On-disk cache, relative to the working directory. Set it to "" to disable:
+  # the list then lives only in memory and is fetched again on every start.
+  cache: data/relays.json
+  # cache: ""
 
 # tunnel_probe: address dialed through the tunnel to decide it is healthy.
+# The default 10.64.0.1:1080 is Mullvad's internal endpoint: 10.64.0.1 is their
+# DNS server inside the tunnel, and port 1080 is the entry server's SOCKS proxy.
+# It is reachable from any Mullvad tunnel, so a TCP connect there proves packets
+# flow both ways. Keep the default unless you know another internal address that
+# always answers.
 tunnel_probe: 10.64.0.1:1080
 
 # ip_check_url: URL fetched through an exit by GET /ip to report its public IP.

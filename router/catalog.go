@@ -155,7 +155,8 @@ func (c *Catalog) LoadFile(path string) (int, error) {
 	return c.Set(rs), nil
 }
 
-// Fetch downloads the relay list, installs it and writes it to the cache file.
+// Fetch downloads the relay list, installs it and, when cache is not empty,
+// writes it to the cache file. cache == "" keeps the list in memory only.
 func (c *Catalog) Fetch(ctx context.Context, client *http.Client, url, cache string) (int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -182,14 +183,24 @@ func (c *Catalog) Fetch(ctx context.Context, client *http.Client, url, cache str
 		return 0, errors.New("relay api returned no usable relays")
 	}
 	if cache != "" {
-		tmp := cache + ".tmp"
-		if err := os.MkdirAll(filepath.Dir(cache), 0o755); err == nil {
-			if err := os.WriteFile(tmp, b, 0o644); err == nil {
-				_ = os.Rename(tmp, cache)
-			}
-		}
+		_ = writeCache(cache, b)
 	}
 	return n, nil
+}
+
+// writeCache atomically writes b to path. An empty path disables caching.
+func writeCache(path string, b []byte) error {
+	if path == "" {
+		return nil
+	}
+	tmp := path + ".tmp"
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // Resolve returns the ip:port of a relay's SOCKS5 proxy (an internal 10.124.x.x address).

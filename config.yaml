@@ -97,9 +97,17 @@ breaker:
 catalog:
   url: https://api.mullvad.net/www/relays/wireguard/   # source of the relay list
   refresh: 6h                                         # refresh interval once up
-  cache: data/relays.json                             # on-disk cache, relative to the working directory
+  # On-disk cache, relative to the working directory. Set it to "" to disable:
+  # the list then lives only in memory and is fetched again on every start.
+  cache: data/relays.json
+  # cache: ""
 
 # tunnel_probe: address dialed through the tunnel to decide it is healthy.
+# The default 10.64.0.1:1080 is Mullvad's internal endpoint: 10.64.0.1 is their
+# DNS server inside the tunnel, and port 1080 is the entry server's SOCKS proxy.
+# It is reachable from any Mullvad tunnel, so a TCP connect there proves packets
+# flow both ways. Keep the default unless you know another internal address that
+# always answers.
 tunnel_probe: 10.64.0.1:1080
 
 # ip_check_url: URL fetched through an exit by GET /ip to report its public IP.

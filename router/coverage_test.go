@@ -254,6 +254,10 @@ func TestCatalogFetchAndCache(t *testing.T) {
 	if n, err := c2.LoadFile(cache); err != nil || n != 1 {
 		t.Errorf("cache reload: %d %v", n, err)
 	}
+	// An empty cache path disables saving; the fetch still installs the list.
+	if n, err := c.Fetch(context.Background(), srv.Client(), srv.URL, ""); err != nil || n != 1 {
+		t.Errorf("fetch without cache: %d %v", n, err)
+	}
 	fail.Store(true)
 	if _, err := c.Fetch(context.Background(), srv.Client(), srv.URL, cache); err == nil {
 		t.Error("HTTP 500 accepted")
@@ -266,6 +270,26 @@ func TestCatalogFetchAndCache(t *testing.T) {
 	}
 	if _, err := ParseRelays([]byte("not json")); err == nil {
 		t.Error("bad JSON accepted")
+	}
+}
+
+func TestWriteCache(t *testing.T) {
+	dir := t.TempDir()
+	if err := writeCache("", []byte("x")); err != nil {
+		t.Fatalf("empty cache: %v", err)
+	}
+	if ents, err := os.ReadDir(dir); err != nil || len(ents) != 0 {
+		t.Errorf("empty cache wrote files: %v %v", ents, err)
+	}
+	p := filepath.Join(dir, "sub", "relays.json")
+	if err := writeCache(p, []byte(`[1]`)); err != nil {
+		t.Fatalf("write cache: %v", err)
+	}
+	if b, err := os.ReadFile(p); err != nil || string(b) != `[1]` {
+		t.Errorf("cache contents: %q %v", b, err)
+	}
+	if _, err := os.Stat(p + ".tmp"); !os.IsNotExist(err) {
+		t.Errorf("temp file left behind: %v", err)
 	}
 }
 
