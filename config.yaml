@@ -1,0 +1,106 @@
+# mullpod configuration. Every setting lives here; .env holds only secrets
+# (WIREGUARD_PRIVATE_KEY, WIREGUARD_ADDRESSES, PROXY_PASSWORD).
+# The file is read once at startup: restart the process after editing it.
+#
+# Proxy username grammar: <exit>[_<session>]
+#   exit = <cc> | <cc>-<city> | <cc>-<city>-wg-NNN | any | <alias> | current | default
+#   (examples in the README under "Use")
+
+# listeners: one entry per open port. Every listener serves both the HTTP proxy
+# and SOCKS5 on the same address; the client's first byte selects the protocol.
+# Keys:
+#   name      unique label for logs and metrics
+#   addr      host:port to listen on. A host is required; IPv6 must be bracketed:
+#             "[::1]:8090". 0.0.0.0, :: and a bare ":port" are rejected, because
+#             Mullvad's exit proxies have no auth and must not be exposed by mistake.
+#   exit      optional fixed exit for this port (country, city, server, any, alias).
+#             Used when the username/header/rules don't choose one.
+#   session   optional fixed session name: keeps one server (and IP) for this port.
+#             It is tracked separately per exit. For clients that can't send a username.
+#   challenge true = answer 407 to HTTP requests without credentials, which makes
+#             browsers and Playwright send the username. false = such requests use
+#             the default exit without prompting.
+listeners:
+  # Main port: the proxy username selects the exit.
+  - { name: main, addr: "127.0.0.1:8090", challenge: true }   # 8080 is often already taken
+  # Credential-free port: default exit, a new server per connection.
+  - { name: open, addr: "127.0.0.1:1080" }
+  # Fixed exits for clients that cannot send a username; sticky per port.
+  - { name: us, addr: "127.0.0.1:8081", exit: us, session: port-us }
+  - { name: gb, addr: "127.0.0.1:8082", exit: gb, session: port-gb }
+  - { name: de, addr: "127.0.0.1:8083", exit: de, session: port-de }
+  - { name: jp, addr: "127.0.0.1:8084", exit: jp, session: port-jp }
+  # IPv6 examples, uncomment if needed
+  # - { name: main6, addr: "[::1]:8090", challenge: true }     # IPv6 loopback
+  # - { name: lan6,  addr: "[fd00::10]:8081", exit: de }        # a specific interface
+  # - { name: dual,  addr: "[2001:db8::20]:8085", exit: jp }
+
+# api: the control API (health, exits, ip, forget, PAC, metrics, tunnel switch).
+# host:port, same rules as listeners: IPv6 must be bracketed.
+api: "127.0.0.1:8088"
+# api: "[::1]:8088"
+
+# default_exit: exit used when the username, header, rule and listener don't
+# name one (any | <cc> | <cc>-<city> | hostname | alias | current).
+default_exit: any
+
+# sticky: session behaviour. A session gives one client a stable server and IP.
+sticky:
+  ttl: 10m          # idle time before a session may move to another server
+  max: 10000        # maximum tracked sessions; the oldest is evicted first
+  implicit: false   # true = a username without "_session" is sticky on its own
+
+# aliases: named groups of exits, usable anywhere an exit is accepted.
+aliases:
+  eu: [de, nl, se, ch, fr, gb, at, dk, no, fi, es, it, pl, be, ie]
+  nordic: [se, no, dk, fi]
+  # Mullvad-owned hardware only:
+  # owned: [se-sto-wg-001, se-sto-wg-002]
+
+# rules: per-domain exits, applied server-side when the client doesn't name an
+# exit. match is an exact host or "*.suffix" (which also matches the bare suffix).
+rules: []
+# rules:
+#   - { match: "*.bbc.co.uk", exit: gb }
+#   - { match: "*.nhk.or.jp", exit: jp }
+
+# pac: the proxy auto-config file served at GET /proxy.pac.
+pac:
+  # Host written into the PAC file. Empty = the address the browser fetched it
+  # from. Set it if browsers reach the API through another address.
+  host: ""
+  # Listener port the PAC file points at (here: the fixed US exit).
+  port: "8081"
+
+# tunnel: the Mullvad WireGuard tunnel held inside this process (no root, no TUN).
+# The device key and address come from .env, not from this file.
+tunnel:
+  entry: us-mia             # entry server: country, city or hostname; pick one near you
+  mtu: 1420                 # WireGuard MTU; 1420 fits most networks
+  dns: 10.64.0.1            # resolver used inside the tunnel (Mullvad's)
+  probe_interval: 10s       # how often the tunnel health check runs
+  fail_threshold: 3         # failed probes in a row before switching entry server
+  connect_timeout: 15s      # max time to bring the tunnel up
+  bootstrap_direct: true    # first run without a cache: fetch the relay list over
+                            # the host network; later refreshes go through the tunnel
+
+# dial_timeout: max time for one outbound connection, including the SOCKS handshake.
+dial_timeout: 15s
+
+# breaker: how long a failing exit is benched. base doubles on each consecutive
+# failure, up to max.
+breaker:
+  base: 30s
+  max: 10m
+
+# catalog: the Mullvad relay list.
+catalog:
+  url: https://api.mullvad.net/www/relays/wireguard/   # source of the relay list
+  refresh: 6h                                         # refresh interval once up
+  cache: data/relays.json                             # on-disk cache, relative to the working directory
+
+# tunnel_probe: address dialed through the tunnel to decide it is healthy.
+tunnel_probe: 10.64.0.1:1080
+
+# ip_check_url: URL fetched through an exit by GET /ip to report its public IP.
+ip_check_url: https://am.i.mullvad.net/json

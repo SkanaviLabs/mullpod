@@ -1,0 +1,14 @@
+# WireGuard keys
+.env
+.env.*
+!.env.example
+*.zip
+*.conf
+
+.DS_Store
+__pycache__/
+bin/
+data/
+.idea/
+/router/mullpod
+/router/router
