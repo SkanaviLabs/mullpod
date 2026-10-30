@@ -1,7 +1,10 @@
 # mullpod
 
-A single executable local HTTP and SOCKS5 proxy with basic routing that sends each connection through any of Mullvad's ~530 servers, chosen by the
-proxy username. The WireGuard connection lives inside the process, which simplifies many setups.  
+[Mullvad VPN](https://mullvad.net) is a pretty unique service: it lets you to use all of its exit servers via SOCKS5 once you connect to single entry point via Wireguard connection.
+This makes it incredibly useful for many agentic and testing scenarios, however the network setup can be complicated. See [Mullvad docs](https://mullvad.net/en/help/socks5-proxy) for details.  
+
+**mullpod** is a single executable that connects to a Mullvad entry point using an internal WireGuard process, hence does not require any additional network setup. It provides local HTTP and SOCKS5 proxies with basic routing, allowing each connection to be routed through any of Mullvad's ~530 servers based on the proxy username.  
+
 **Warning: It's a convenience, not a network isolation tool:** see
 [Network isolation](#network-isolation) for details.
 
