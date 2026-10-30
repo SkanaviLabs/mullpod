@@ -318,3 +318,19 @@ tunnel:
 		t.Errorf("serve: %v", err)
 	}
 }
+
+func TestLoopbackAddr(t *testing.T) {
+	for addr, want := range map[string]bool{
+		"127.0.0.1:8090": true,
+		"[::1]:8088":     true,
+		"localhost:8080": true,
+		"0.0.0.0:8080":   false,
+		":8080":          false,
+		"example.com:80": false,
+		"nope":           false,
+	} {
+		if got := loopbackAddr(addr); got != want {
+			t.Errorf("loopbackAddr(%q) = %v, want %v", addr, got, want)
+		}
+	}
+}
