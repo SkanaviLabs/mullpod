@@ -20,18 +20,39 @@ import (
 
 	"golang.zx2c4.com/wireguard/conn"
 	"golang.zx2c4.com/wireguard/device"
+	"golang.zx2c4.com/wireguard/tun"
 	"golang.zx2c4.com/wireguard/tun/netstack"
 )
 
 var errTunnelDown = errors.New("tunnel down (reconnecting)")
+
+// wgDevice is the part of *device.Device the tunnel uses (faked in tests).
+type wgDevice interface {
+	IpcSet(string) error
+	Up() error
+	Close()
+}
+
+// tunnelNet is the userspace network stack (faked in tests).
+type tunnelNet interface {
+	DialContext(ctx context.Context, network, addr string) (net.Conn, error)
+	LookupContextHost(ctx context.Context, host string) ([]string, error)
+}
+
+var (
+	createNetTUN = netstack.CreateNetTUN
+	newWGDevice  = func(d tun.Device) wgDevice {
+		return device.NewDevice(d, conn.NewDefaultBind(), device.NewLogger(device.LogLevelError, "wireguard: "))
+	}
+)
 
 // Tunnel is a userspace WireGuard tunnel to one Mullvad entry server. Its
 // network stack lives inside this process, so nothing else on the host can use
 // it, and the router has no other route out: it fails closed by construction.
 type Tunnel struct {
 	cfg       *Config
-	dev       *device.Device
-	tnet      *netstack.Net
+	dev       wgDevice
+	net       tunnelNet
 	up        atomic.Bool
 	switchReq chan struct{}
 
@@ -54,11 +75,11 @@ func NewTunnel(cfg *Config) (*Tunnel, error) {
 	if err != nil {
 		return nil, fmt.Errorf("tunnel.dns: %w", err)
 	}
-	tdev, tnet, err := netstack.CreateNetTUN([]netip.Addr{addr}, []netip.Addr{dns}, cfg.Tunnel.MTU)
+	tdev, tnet, err := createNetTUN([]netip.Addr{addr}, []netip.Addr{dns}, cfg.Tunnel.MTU)
 	if err != nil {
 		return nil, err
 	}
-	dev := device.NewDevice(tdev, conn.NewDefaultBind(), device.NewLogger(device.LogLevelError, "wireguard: "))
+	dev := newWGDevice(tdev)
 	if err := dev.IpcSet("private_key=" + key + "\n"); err != nil {
 		dev.Close()
 		return nil, err
@@ -67,7 +88,7 @@ func NewTunnel(cfg *Config) (*Tunnel, error) {
 		dev.Close()
 		return nil, err
 	}
-	return &Tunnel{cfg: cfg, dev: dev, tnet: tnet, switchReq: make(chan struct{}, 1)}, nil
+	return &Tunnel{cfg: cfg, dev: dev, net: tnet, switchReq: make(chan struct{}, 1)}, nil
 }
 
 // Switch asks the tunnel to move to another entry server.
@@ -101,11 +122,11 @@ func parseTunnelAddr(s string) (netip.Addr, error) {
 }
 
 func (t *Tunnel) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
-	return t.tnet.DialContext(ctx, network, addr)
+	return t.net.DialContext(ctx, network, addr)
 }
 
 func (t *Tunnel) LookupHost(ctx context.Context, host string) ([]string, error) {
-	return t.tnet.LookupContextHost(ctx, host)
+	return t.net.LookupContextHost(ctx, host)
 }
 
 func (t *Tunnel) Ready() bool { return t.up.Load() }
@@ -232,7 +253,7 @@ func (t *Tunnel) watch(ctx context.Context) {
 func (t *Tunnel) probe(ctx context.Context) bool {
 	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
 	defer cancel()
-	c, err := t.tnet.DialContext(ctx, "tcp", t.cfg.TunnelProbe)
+	c, err := t.net.DialContext(ctx, "tcp", t.cfg.TunnelProbe)
 	if err != nil {
 		return false
 	}

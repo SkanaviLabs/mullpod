@@ -8,8 +8,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -24,41 +26,71 @@ import (
 //	go build -ldflags "-X main.version=$(git describe --tags --always --dirty)"
 var version = "dev"
 
-func main() {
-	cfgPath := flag.String("config", "config.yaml", "config file (all settings)")
-	envPath := flag.String("env", ".env", "secrets file: WIREGUARD_PRIVATE_KEY, WIREGUARD_ADDRESSES, PROXY_PASSWORD")
-	showVersion := flag.Bool("version", false, "print version, copyright and license, then exit")
-	flag.Parse()
+// Seams for tests: the real implementations bind ports, open the tunnel and
+// install signal handlers.
+var (
+	newTunnel = NewTunnel
+	listen    = net.Listen
+	newSignal = func() (context.Context, context.CancelFunc) {
+		return signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	}
+	exit      = os.Exit
+	sweepTick = time.Minute
+)
 
+func main() { exit(cli(os.Args[1:], os.Stdout, os.Stderr)) }
+
+// cli parses flags and runs the process. It returns the process exit code.
+func cli(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("mullpod", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	cfgPath := fs.String("config", "config.yaml", "config file (all settings)")
+	envPath := fs.String("env", ".env", "secrets file: WIREGUARD_PRIVATE_KEY, WIREGUARD_ADDRESSES, PROXY_PASSWORD")
+	showVersion := fs.Bool("version", false, "print version, copyright and license, then exit")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
 	if *showVersion {
-		fmt.Printf("mullpod %s\n", version)
-		fmt.Println("Copyright (c) 2026 Stanislav Yurin, AI Security Engineering LLC dba Skanavi")
-		fmt.Println("License: MIT (see LICENSE)")
-		return
+		fmt.Fprintf(stdout, "mullpod %s\n", version)
+		fmt.Fprintln(stdout, "Copyright (c) 2026 Stanislav Yurin, AI Security Engineering LLC dba Skanavi")
+		fmt.Fprintln(stdout, "License: MIT (see LICENSE)")
+		return 0
 	}
 
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+	slog.SetDefault(slog.New(slog.NewJSONHandler(stdout, nil)))
 	slog.Info("starting", "version", version)
-	if *envPath != "" {
-		ignored, err := loadDotenv(*envPath)
+	ctx, stop := newSignal()
+	defer stop()
+	if err := serve(ctx, *cfgPath, *envPath); err != nil {
+		slog.Error("mullpod", "err", err.Error())
+		return 1
+	}
+	return 0
+}
+
+// serve loads the configuration and runs until ctx is canceled or a fatal
+// error occurs.
+func serve(ctx context.Context, cfgPath, envPath string) error {
+	if envPath != "" {
+		ignored, err := loadDotenv(envPath)
 		if err != nil && !os.IsNotExist(err) {
-			slog.Error("env", "err", err.Error())
-			os.Exit(1)
+			return fmt.Errorf("env: %w", err)
 		}
 		for _, k := range ignored {
 			slog.Warn(".env: ignoring non-secret key; set it in config.yaml", "key", k)
 		}
 	}
-	cfg, err := LoadConfig(*cfgPath)
+	cfg, err := LoadConfig(cfgPath)
 	if err != nil {
-		slog.Error("config", "err", err.Error())
-		os.Exit(1)
+		return fmt.Errorf("config: %w", err)
 	}
 	warnExposed(cfg)
-	tun, err := NewTunnel(cfg)
+	tun, err := newTunnel(cfg)
 	if err != nil {
-		slog.Error("tunnel", "err", err.Error())
-		os.Exit(1)
+		return fmt.Errorf("tunnel: %w", err)
 	}
 
 	cat := NewCatalog(tun.LookupHost)
@@ -67,19 +99,25 @@ func main() {
 	d := &Dialer{cat: cat, picker: pk, br: br, net: tun, timeout: cfg.DialTimeout.Duration, ready: tun.Ready}
 	m := &Metrics{}
 
-	if n, err := cat.LoadFile(cfg.Catalog.Cache); err == nil {
-		slog.Info("catalog loaded from cache", "relays", n)
+	if cfg.Catalog.Cache != "" {
+		if n, err := cat.LoadFile(cfg.Catalog.Cache); err == nil {
+			slog.Info("catalog loaded from cache", "relays", n)
+		}
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
+
+	// Fatal errors from goroutines are reported here instead of killing the
+	// process, so serve can shut down cleanly.
+	fatal := make(chan error, 1)
+	fail := func(err error) { reportFatal(fatal, err) }
+
 	slog.Info("tunnel: starting", "entry", cfg.Tunnel.Entry)
 	go func() {
 		// The entry server's key and endpoint come from the relay list, so
 		// without a cache it is fetched once over the host network.
 		for cat.Len() == 0 && ctx.Err() == nil {
 			if !cfg.Tunnel.BootstrapDirect {
-				slog.Error("tunnel: no cached relay list and tunnel.bootstrap_direct is off")
-				os.Exit(1)
+				fail(errors.New("no cached relay list and tunnel.bootstrap_direct is off"))
+				return
 			}
 			n, err := cat.Fetch(ctx, &http.Client{Timeout: 30 * time.Second}, cfg.Catalog.URL, cfg.Catalog.Cache)
 			if err != nil {
@@ -92,8 +130,9 @@ func main() {
 		tun.Run(ctx, pk)
 	}()
 	go catalogLoop(ctx, cat, cfg, tun)
+	sweep := sweepTick
 	go func() {
-		t := time.NewTicker(time.Minute)
+		t := time.NewTicker(sweep)
 		defer t.Stop()
 		for {
 			select {
@@ -106,10 +145,9 @@ func main() {
 	}()
 
 	for _, l := range cfg.Listeners {
-		ln, err := net.Listen("tcp", l.Addr)
+		ln, err := listen("tcp", l.Addr)
 		if err != nil {
-			slog.Error("listen", "addr", l.Addr, "err", err.Error())
-			os.Exit(1)
+			return fmt.Errorf("listen %s: %w", l.Addr, err)
 		}
 		srv := &Server{cfg: cfg, ln: l, d: d, m: m}
 		go srv.Serve(ln)
@@ -119,17 +157,29 @@ func main() {
 	hs := &http.Server{Addr: cfg.API, Handler: api.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		if err := hs.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			slog.Error("api", "err", err.Error())
-			os.Exit(1)
+			fail(fmt.Errorf("api: %w", err))
 		}
 	}()
 	slog.Info("api listening", "addr", cfg.API)
 
-	<-ctx.Done()
+	var runErr error
+	select {
+	case <-ctx.Done():
+	case runErr = <-fatal:
+	}
 	slog.Info("shutting down")
 	sctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	hs.Shutdown(sctx)
+	return runErr
+}
+
+// reportFatal queues err without blocking when one is already queued.
+func reportFatal(ch chan<- error, err error) {
+	select {
+	case ch <- err:
+	default:
+	}
 }
 
 // warnExposed flags ports reachable beyond localhost. Mullvad's exit proxies
