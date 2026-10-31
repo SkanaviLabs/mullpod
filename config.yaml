@@ -23,13 +23,14 @@
 listeners:
   # Main port: the proxy username selects the exit.
   - { name: main, addr: "127.0.0.1:8090", challenge: true }   # 8080 is often already taken
+  # Uncomment to add listeners: every entry opens one more port.
   # Credential-free port: default exit, a new server per connection.
-  - { name: open, addr: "127.0.0.1:1080" }
+  # - { name: open, addr: "127.0.0.1:1080" }
   # Fixed exits for clients that cannot send a username; sticky per port.
-  - { name: us, addr: "127.0.0.1:8081", exit: us, session: port-us }
-  - { name: gb, addr: "127.0.0.1:8082", exit: gb, session: port-gb }
-  - { name: de, addr: "127.0.0.1:8083", exit: de, session: port-de }
-  - { name: jp, addr: "127.0.0.1:8084", exit: jp, session: port-jp }
+  # - { name: us, addr: "127.0.0.1:8081", exit: us, session: port-us }
+  # - { name: gb, addr: "127.0.0.1:8082", exit: gb, session: port-gb }
+  # - { name: de, addr: "127.0.0.1:8083", exit: de, session: port-de }
+  # - { name: jp, addr: "127.0.0.1:8084", exit: jp, session: port-jp }
   # IPv6 examples, uncomment if needed
   # - { name: main6, addr: "[::1]:8090", challenge: true }     # IPv6 loopback
   # - { name: lan6,  addr: "[fd00::10]:8081", exit: de }        # a specific interface
@@ -69,8 +70,8 @@ pac:
   # Host written into the PAC file. Empty = the address the browser fetched it
   # from. Set it if browsers reach the API through another address.
   host: ""
-  # Listener port the PAC file points at (here: the fixed US exit).
-  port: "8081"
+  # Listener port the PAC file points at (here: the main port).
+  port: "8090"
 
 # tunnel: the Mullvad WireGuard tunnel held inside this process (no root, no TUN).
 # The device key and address come from .env, not from this file.
