@@ -11,7 +11,9 @@ This makes it incredibly useful for many agentic and testing scenarios, however 
 ## Table of contents
 
 - [Use](#use)
+  - [curl and scripts](#curl-and-scripts)
   - [Sessions](#sessions)
+  - [Browsers](#browsers)
   - [Ports](#ports-loopback-by-default-every-port-speaks-http-and-socks5)
   - [Control API](#control-api)
 - [What it is](#what-it-is)
@@ -27,37 +29,38 @@ This makes it incredibly useful for many agentic and testing scenarios, however 
 
 ## Use
 
-```bash
-make run                                                                     # start it (first time: see Setup)
+Run mullpod (see [Setup](#setup)), then point any HTTP or SOCKS5 client at one of its
+[ports](#ports-loopback-by-default-every-port-speaks-http-and-socks5). The proxy username
+picks the exit; see the examples below for curl, shell tooling and browsers.
 
+### curl and scripts
+
+Proxy username = `<exit>[_<session>]`, password = anything (unless `PROXY_PASSWORD` is set).
+HTTP and SOCKS5 are both available; use `socks5h://` so hostnames are resolved through the
+proxy as well.
+
+```bash
 curl -x http://de:x@127.0.0.1:8090 https://am.i.mullvad.net/json            # any German server
 curl -x http://us-nyc:x@127.0.0.1:8090 https://am.i.mullvad.net/json        # any New York server
 curl -x http://se-sto-wg-001:x@127.0.0.1:8090 https://am.i.mullvad.net/json # exactly this server
 curl -x http://any:x@127.0.0.1:8090 https://am.i.mullvad.net/json           # any server, new one each time
 curl -x http://de_job1:x@127.0.0.1:8090 https://am.i.mullvad.net/json       # German, same IP for session job1
-curl -x socks5h://jp:x@127.0.0.1:1080 https://am.i.mullvad.net/json         # SOCKS5 works the same way
-curl -x http://127.0.0.1:8083 https://am.i.mullvad.net/json                 # no username: fixed port, Germany
-
-export HTTPS_PROXY=http://any_agent1:x@127.0.0.1:8090                        # agents / SDKs
+curl -x socks5h://jp:x@127.0.0.1:8090 https://am.i.mullvad.net/json         # SOCKS5 on the same port
+# Optional listeners (commented out in config.yaml), e.g. a credential-free fixed exit:
+# curl -x http://127.0.0.1:8083 https://am.i.mullvad.net/json               # fixed port, Germany
 ```
 
-The only required configuration is in `.env` (copy from `.env.example`); everything else
-lives in `config.yaml` (see [Setup](#setup) and [Config](#config)):
+Tools that read proxy environment variables (SDKs, agents, package managers) can be pointed
+at the same port for the lifetime of a shell or container:
 
 ```bash
-# From the Mullvad WireGuard config you downloaded:
-WIREGUARD_PRIVATE_KEY=<PrivateKey>
-# IPv4 part of the Address line only:
-WIREGUARD_ADDRESSES=10.x.x.x/32
-# Optional, require every client to send this as the proxy password:
-# PROXY_PASSWORD=
+export HTTPS_PROXY=http://any_agent1:x@127.0.0.1:8090
+export HTTP_PROXY="$HTTPS_PROXY"
 ```
 
-Both values come from the one `.conf` file you download; the address must match the key, or
-the tunnel passes no traffic. Nothing is prefilled for you: a placeholder such as
-`10.x.x.x/32` is rejected at startup.
-
-Proxy username = `<exit>[_<session>]`, password = anything (unless `PROXY_PASSWORD` is set).
+Only programs started in that shell use the proxy; everything else on the machine keeps its
+normal route. Give each agent or job its own session (`_agent1`, `_job42`) so its exit stays
+put for the whole run.
 
 Exits use Mullvad's own identifiers, the same ones as in the Mullvad app, relay list and
 server hostnames:
@@ -102,13 +105,18 @@ curl -x http://de_job:x@127.0.0.1:8090 …              # → a German server: s
   `/forget?session=job` (GET or POST).
 - **If the current server fails:** the next request with a broad exit moves the session to
   a healthy server. An exact server name always uses its server.
-- **Fixed ports** (8081–8084) have a built-in session per port. It's kept separately for
-  each exit, so a per-domain rule that sends some sites elsewhere doesn't move the port's
-  main IP.
+- **Fixed ports** (8081–8084, commented out in `config.yaml` by default) have a built-in
+  session per port. It's kept separately for each exit, so a per-domain rule that sends some
+  sites elsewhere doesn't move the port's main IP.
 
+### Browsers
 
-**Playwright:** use HTTP (Chromium can't authenticate to SOCKS5) and always give each
-context a session:
+Chromium can't authenticate to SOCKS5, so point browsers at the HTTP port. Give every context
+or page its own session, otherwise the connections of a single page load can spread across
+exits.
+
+**Playwright** (Chromium): the launch-level proxy is required for per-context proxies, and
+each context gets its own session:
 
 ```python
 browser = p.chromium.launch(proxy={"server": "http://127.0.0.1:8090"},
@@ -117,17 +125,32 @@ ctx = browser.new_context(proxy={"server": "http://127.0.0.1:8090",
                                  "username": "de-fra_ctx1", "password": "x"})
 ```
 
-**Plain Chrome:** `--proxy-server=http://127.0.0.1:8081` (fixed US exit) or
-`--proxy-pac-url=http://127.0.0.1:8088/proxy.pac`.
+**Puppeteer:** launch with the proxy, then authenticate the page:
+
+```js
+const browser = await puppeteer.launch({args: ["--proxy-server=http://127.0.0.1:8090"]});
+const page = await browser.newPage();
+await page.authenticate({username: "de-fra_ctx1", password: "x"});
+```
+
+**Plain Chrome:** `--proxy-server=http://127.0.0.1:8090`; the port answers `407`, so Chrome
+prompts for the proxy username (`de-fra_ctx1`, any password). Or use
+`--proxy-pac-url=http://127.0.0.1:8088/proxy.pac`. To skip the prompt, enable a fixed-exit
+listener in `config.yaml` (e.g. `us` on `127.0.0.1:8081`) and point Chrome at that port.
+
+Exit proxies are TCP-only, so QUIC and UDP WebRTC don't go through mullpod; the Chromium
+flag above disables non-proxied UDP. See [Caveats](#caveats).
 
 ### Ports (loopback by default; every port speaks HTTP and SOCKS5)
 
 | port | |
 |---|---|
-| 8090 | main; HTTP without credentials gets `407` so browsers send the username |
-| 1080 | no credentials needed; default exit, rotates per connection |
-| 8081 / 8082 / 8083 / 8084 | fixed `us` / `gb` / `de` / `jp`, sticky per port |
+| 8090 | main; proxy username selects the exit. HTTP without credentials gets `407` so browsers send the username |
 | 8088 | control API |
+
+The shipped `config.yaml` opens only the main listener. It also contains commented examples
+for a credential-free port (1080) and fixed-exit ports (8081–8084); uncomment one to open it.
+Every open listener serves both HTTP and SOCKS5.
 
 Ports are set per listener in `config.yaml`, each with an explicit `host:port` address; the
 shipped file uses 8090 for the main port (8080 is often already taken) and binds everything
@@ -184,8 +207,9 @@ Your machine does not connect to Mullvad; only traffic you send to these ports d
 - **Geo-specific results.** See what a search page, price, store listing or ad looks like
   from a country (`jp`) or a city (`de-fra`), and move a session between them mid-run.
 - **Browser automation.** Playwright selects an exit per context over HTTP, Puppeteer via
-  `page.authenticate`; plain Chrome uses a fixed port (`--proxy-server=http://127.0.0.1:8081`)
-  or the PAC file (`/proxy.pac`). No SOCKS5 authentication needed.
+  `page.authenticate`; plain Chrome uses the main port with the username prompt
+  (`--proxy-server=http://127.0.0.1:8090`) or the PAC file (`/proxy.pac`). No SOCKS5
+  authentication needed.
 - **One process tree through Mullvad.** Export `HTTPS_PROXY` in one shell or container and
   only programs started there are affected; the rest of the machine keeps its normal route.
   No root, no TUN device, no system-wide tunnel.
