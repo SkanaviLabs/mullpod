@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Stanislav Yurin, AI Security Engineering LLC dba Skanavi
+# SPDX-License-Identifier: MIT
+
 """Load a page through a sticky exit and check the IP stays the same through the proxy.
 
 pip install playwright && playwright install chromium

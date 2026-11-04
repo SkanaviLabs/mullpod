@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Stanislav Yurin, AI Security Engineering LLC dba Skanavi
+# SPDX-License-Identifier: MIT
+
 """Find mullpod's addresses: the API from config.yaml, listeners from the running API.
 
 python3 test/addrs.py api     -> 127.0.0.1:8088

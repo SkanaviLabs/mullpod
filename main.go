@@ -47,16 +47,24 @@ func cli(args []string, stdout, stderr io.Writer) int {
 	cfgPath := fs.String("config", "config.yaml", "config file (all settings)")
 	envPath := fs.String("env", ".env", "secrets file: WIREGUARD_PRIVATE_KEY, WIREGUARD_ADDRESSES, PROXY_PASSWORD")
 	showVersion := fs.Bool("version", false, "print version, copyright and license, then exit")
+	showLicenses := fs.Bool("licenses", false, "print copyright and license notices (including third-party), then exit")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
 		return 2
 	}
+	if *showLicenses {
+		fmt.Fprint(stdout, licenseText)
+		fmt.Fprintln(stdout)
+		fmt.Fprint(stdout, thirdPartyNotices)
+		return 0
+	}
 	if *showVersion {
 		fmt.Fprintf(stdout, "mullpod %s\n", version)
 		fmt.Fprintln(stdout, "Copyright (c) 2026 Stanislav Yurin, AI Security Engineering LLC dba Skanavi")
 		fmt.Fprintln(stdout, "License: MIT (see LICENSE)")
+		fmt.Fprintln(stdout, "Third-party notices: run mullpod -licenses or see THIRD_PARTY_NOTICES.md")
 		return 0
 	}
 

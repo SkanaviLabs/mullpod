@@ -69,6 +69,17 @@ func TestCLI(t *testing.T) {
 
 	out.Reset()
 	errb.Reset()
+	if code := cli([]string{"-licenses"}, &out, &errb); code != 0 {
+		t.Errorf("licenses exit = %d", code)
+	}
+	if !strings.Contains(out.String(), "MIT License") ||
+		!strings.Contains(out.String(), "wireguard-go") ||
+		!strings.Contains(out.String(), "Apache License 2.0") {
+		t.Errorf("licenses output does not list the required notices: %q", out.String())
+	}
+
+	out.Reset()
+	errb.Reset()
 	if code := cli([]string{"-nope"}, &out, &errb); code != 2 {
 		t.Errorf("bad flag exit = %d", code)
 	}

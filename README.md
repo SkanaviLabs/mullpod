@@ -1,6 +1,6 @@
 # mullpod
 
-[Mullvad VPN](https://mullvad.net) is a pretty unique service: it lets you to use all of its exit servers via SOCKS5 once you connect to single entry point via Wireguard connection.
+[Mullvad VPN](https://mullvad.net) is a pretty unique service: it lets you use all of its exit servers via SOCKS5 once you connect to a single entry point over a WireGuard connection.  
 This makes it incredibly useful for many agentic and testing scenarios, however the network setup can be complicated. See [Mullvad docs](https://mullvad.net/en/help/socks5-proxy) for details.  
 
 **mullpod** is a single executable that connects to a Mullvad entry point using an internal WireGuard process, hence does not require any additional network setup. It provides local HTTP and SOCKS5 proxies with basic routing, allowing each connection to be routed through any of Mullvad's ~530 servers based on the proxy username.  
@@ -247,7 +247,7 @@ connection by dialing a different `10.124.x.x:1080`.
 client → 127.0.0.1 → mullpod ─ in-process WireGuard tunnel → entry server → exit's SOCKS5 → internet
 ```
 
-- **Tunnel:** wireguard-go with a userspace network stack. No root, no TUN device, no Docker.
+- **Tunnel:** [wireguard-go](https://git.zx2c4.com/wireguard-go/about/) with a userspace network stack. No root, no TUN device, no Docker.
   The stack exists only inside the process, so nothing else on the machine can use it and the
   proxy has no other route out.
 - **Fails closed:** the proxy never dials the internet directly. While the tunnel is down,
@@ -289,7 +289,8 @@ Needs Go (`brew install go`).
 
    This builds `bin/mullpod` and runs it in the foreground. Logs (one JSON line per
    connection) go to the terminal; Ctrl-C stops it. `./bin/mullpod -version` prints the
-   build version and the license notice.
+   build version and the license notice; `./bin/mullpod -licenses` prints the full
+   copyright and license notices (mullpod's own and its third-party dependencies).
 5. In another terminal:
 
    ```bash
@@ -384,4 +385,22 @@ MIT — see [LICENSE](LICENSE). Free to use, modify and redistribute, including 
 provided the copyright notice and license text are kept.
 
 Copyright (c) 2026 Stanislav Yurin, AI Security Engineering LLC dba Skanavi.
+
+mullpod is an independent project. It is not affiliated with, endorsed by, or sponsored by
+Mullvad VPN AB or the WireGuard project.
+
+**Mullvad.** "Mullvad" and "Mullvad VPN" are trademarks of Mullvad VPN AB. They are used
+here only to identify the service mullpod connects to. Using Mullvad's network is subject to
+[Mullvad's terms of service](https://mullvad.net/en/help/terms-service) and requires a
+Mullvad account and device slot. This project's MIT license does not grant any rights to
+Mullvad's service, network, name or logo.
+
+**WireGuard.** "WireGuard" and the "WireGuard" logo are registered trademarks of Jason A.
+Donenfeld. mullpod uses the [wireguard-go](https://git.zx2c4.com/wireguard-go/about/) library
+and does not include the WireGuard logo or claim to be the official WireGuard software.
+
+**Third-party software.** mullpod's own code is MIT-licensed. Its dependencies keep their own
+licenses (MIT, Apache-2.0 and BSD-3-Clause); the full texts and copyright notices are in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The same notices are embedded in the binary
+and can be printed with `mullpod -licenses`.
 

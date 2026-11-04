@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 Stanislav Yurin, AI Security Engineering LLC dba Skanavi
+# SPDX-License-Identifier: MIT
+#
 # End-to-end checks against a running instance (start it with `make run` first).
 # Usage: scripts/verify.sh
 set -uo pipefail
