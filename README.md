@@ -5,8 +5,10 @@ This makes it incredibly useful for many agentic and testing scenarios, however 
 
 **mullpod** is a single executable that connects to a Mullvad entry point using an internal WireGuard process, hence does not require any additional network setup. It provides local HTTP and SOCKS5 proxies with basic routing, allowing each connection to be routed through any of Mullvad's ~530 servers based on the proxy username.  
 
-**Warning: It's a convenience, not a network isolation tool:** see
-[Network isolation](#network-isolation) for details.
+**Warning:** while mullpod doesn't resolve domain names you visit through your system
+resolver (the only exception is a one-time Mullvad API lookup on the very first run; see
+[DNS](#dns)), it's a convenience, not a network isolation tool: don't rely
+on it for strict isolation. See [Network isolation](#network-isolation) for details.
 
 ## Table of contents
 
@@ -20,6 +22,7 @@ This makes it incredibly useful for many agentic and testing scenarios, however 
 - [Use cases](#use-cases)
 - [Network isolation](#network-isolation)
 - [How it works](#how-it-works)
+- [DNS](#dns)
 - [Setup](#setup)
 - [Config](#config)
 - [Speed](#speed)
@@ -262,13 +265,39 @@ client → 127.0.0.1 → mullpod ─ in-process WireGuard tunnel → entry serve
   through the tunnel every 6 h. The entry server's WireGuard key and IP come from this list,
   so on the very first run (no cache) it's fetched once over the normal network
   (`tunnel.bootstrap_direct`).
-- **Ports:** every port speaks HTTP and SOCKS5. Exit hostnames are resolved inside the
-  tunnel, via Mullvad DNS `10.64.0.1`.
+- **Ports:** every port speaks HTTP and SOCKS5. The exit proxies' own hostnames
+  (`*-wg-socks5-NNN.relays.mullvad.net`) are resolved inside the tunnel, via Mullvad DNS
+  `10.64.0.1`. For the sites you visit, see [DNS](#dns).
 - **Choosing an exit:** round-robin, or sticky per session.
   - **Breaker:** a dead exit proxy is benched (30 s doubling to 10 min), and the request
     retries once on another server.
   - **Errors:** a SOCKS error reply is the target's fault and is passed through without
     penalty.
+
+## DNS
+
+mullpod never looks up the sites you visit through your system resolver. Where the
+lookup happens depends on how the client hands over the address:
+
+| client sends | who resolves the target hostname |
+|---|---|
+| HTTP proxy request (`http://` proxy, incl. `CONNECT`) | the exit server: mullpod passes the hostname on to the exit's SOCKS5 proxy unresolved |
+| SOCKS5 with a hostname (`socks5h://`, browsers with "proxy DNS" on) | the exit server, same as above |
+| SOCKS5 with an IP (`socks5://`, browsers with "proxy DNS" off) | **your machine**, before it ever reaches mullpod: the lookup goes out over your normal network and resolver; only the connection is proxied |
+| HTTP, or SOCKS5 with a hostname, with exit `current` | Mullvad DNS `10.64.0.1`, inside the tunnel |
+
+mullpod's own lookups:
+
+- **Exit proxy addresses** (`*-wg-socks5-NNN.relays.mullvad.net`): via Mullvad DNS
+  `10.64.0.1`, inside the tunnel, and cached.
+- **Entry server:** dialed by the IP in the relay list, no lookup.
+- **Relay list refresh:** through the tunnel.
+- **First run without a cache** (`tunnel.bootstrap_direct`): the Mullvad API is fetched
+  over the normal network, so that one hostname is looked up through your system resolver.
+  Set `bootstrap_direct: false` once `data/relays.json` exists if you want none.
+
+DNS lookups by anything not configured to use mullpod are outside its reach; see
+[Network isolation](#network-isolation).
 
 ## Setup
 
