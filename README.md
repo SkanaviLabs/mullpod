@@ -193,7 +193,8 @@ each worker is on, without any network traffic.
 
 ### Control API
 
-`GET` endpoints are read-only; changes need `POST`.
+`GET` endpoints are read-only; changes need `POST`. Every endpoint, parameter, field and
+status code is in the [API reference](docs/API.md).
 
 ```bash
 curl -s 127.0.0.1:8088/health                # 200 once the tunnel is up; includes version
@@ -203,7 +204,7 @@ curl -s '127.0.0.1:8088/ip?session=us_w1'    # a session's IP; takes a full user
 curl -s 127.0.0.1:8088/sessions              # live sessions: server, open conns, TTL left
 curl -s '127.0.0.1:8088/sessions?name=w1'    # one session (by session name, not username)
 curl -s -XPOST '127.0.0.1:8088/forget?session=job42'   # forget a session
-curl -s 127.0.0.1:8088/metrics
+curl -s 127.0.0.1:8088/metrics               # prometheus - compatible metrics
 curl -s -XPOST 127.0.0.1:8088/tunnel/switch  # move the tunnel to another tunnel.entry server
 ```
 
@@ -426,6 +427,8 @@ curl -s -o /dev/null -w '%{speed_download}\n' -x http://de-fra_t:x@127.0.0.1:809
 plain `go build` in a checkout reports `dev-<commit>`; `go install github.com/SkanaviLabs/mullpod@latest`
 installs it into `$GOBIN` instead. The binary still reads `.env` and `config.yaml` from the
 working directory.
+
+Releases are git tags (`v1.1.0`); [CHANGELOG.md](CHANGELOG.md) lists what changed in each.
 
 `make test` checks `gofmt`, runs `go vet`, and runs the tests with `-race` and coverage.
 Coverage is about 80% of statements; the uncovered part is mostly `main()` wiring and the
