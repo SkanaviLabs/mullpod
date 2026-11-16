@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -72,6 +73,9 @@ func (d *Dialer) Dial(ctx context.Context, sel Selection, target string) (net.Co
 		c, err := d.viaRelay(ctx, r, host, port)
 		if err == nil {
 			d.br.OK(r.Hostname)
+			if sel.Session != "" && !sel.Peek {
+				c = &heldConn{Conn: c, release: d.picker.Hold(sel)}
+			}
 			return c, r.Hostname, nil
 		}
 		var te *TargetError
@@ -115,4 +119,25 @@ func (d *Dialer) viaRelay(ctx context.Context, r *Relay, host string, port int) 
 	}
 	c.SetDeadline(time.Time{})
 	return c, nil
+}
+
+// heldConn keeps its session alive until the connection closes.
+type heldConn struct {
+	net.Conn
+	release func()
+	once    sync.Once
+}
+
+func (c *heldConn) Close() error {
+	c.once.Do(c.release)
+	return c.Conn.Close()
+}
+
+// CloseWrite half-closes like the underlying connection, or closes it fully
+// when that can't half-close (what splice does for a plain net.Conn).
+func (c *heldConn) CloseWrite() error {
+	if cw, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+		return cw.CloseWrite()
+	}
+	return c.Close()
 }

@@ -61,7 +61,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /health", a.health)
 	mux.HandleFunc("GET /exits", a.exits)
 	mux.HandleFunc("GET /ip", a.ip)
-	mux.HandleFunc("GET /forget", a.forget)
+	mux.HandleFunc("GET /sessions", a.sessions)
 	mux.HandleFunc("POST /forget", a.forget)
 	mux.HandleFunc("POST /tunnel/switch", func(w http.ResponseWriter, r *http.Request) {
 		from := a.tun.Status()["entry"]
@@ -72,7 +72,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /metrics", a.metrics)
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"endpoints": []string{"/health", "/exits", "/ip?exit=&session=",
-			"GET|POST /forget?session=", "POST /tunnel/switch", "/proxy.pac", "/metrics"}})
+			"/sessions?name=", "POST /forget?session=", "POST /tunnel/switch", "/proxy.pac", "/metrics"}})
 	})
 	return mux
 }
@@ -97,7 +97,7 @@ func (a *API) health(w http.ResponseWriter, r *http.Request) {
 		age = int(time.Since(t).Seconds())
 	}
 	out := map[string]any{
-		"status": status, "tunnel": tunnel, "relays": n, "catalog_age_s": age,
+		"status": status, "version": version, "tunnel": tunnel, "relays": n, "catalog_age_s": age,
 		"unhealthy": a.br.Unhealthy(), "active_conns": a.m.active.Load(), "sessions": a.picker.Sessions(),
 		"tunnel_info": a.tun.Status(),
 	}
@@ -156,12 +156,21 @@ func (a *API) exits(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ip reports the server and egress IP a selection gets. It is read-only: a
+// session's current server is used if it has one, but the session is never
+// created, moved or refreshed.
 func (a *API) ip(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	sel := Selection{Exit: strings.ToLower(q.Get("exit")), Session: q.Get("session")}
+	sel := Selection{Exit: strings.ToLower(q.Get("exit")), Session: q.Get("session"), Peek: true}
+	if sel.Exit == "" && strings.Contains(sel.Session, "_") {
+		// A full proxy username ("us_w0") selects exit and session together.
+		sel = ParseUser(sel.Session)
+		sel.Peek = true
+	}
 	if sel.Exit == "" || sel.Exit == "default" {
 		sel.Exit = a.cfg.DefaultExit
 	}
+	live := sel.Session != "" && len(a.picker.SessionList(sel.Session)) > 0
 	var server string
 	tr := &http.Transport{
 		DisableKeepAlives: true,
@@ -185,8 +194,13 @@ func (a *API) ip(w http.ResponseWriter, r *http.Request) {
 	if json.Unmarshal(body, &check) != nil {
 		check = string(body)
 	}
-	writeJSON(w, 200, map[string]any{"exit": sel.Exit, "session": sel.Session, "server": server,
+	writeJSON(w, 200, map[string]any{"exit": sel.Exit, "session": sel.Session, "session_live": live, "server": server,
 		"ms": time.Since(start).Milliseconds(), "check": check})
+}
+
+func (a *API) sessions(w http.ResponseWriter, r *http.Request) {
+	list := a.picker.SessionList(r.URL.Query().Get("name"))
+	writeJSON(w, 200, map[string]any{"count": len(list), "ttl_s": int(a.cfg.Sticky.TTL.Seconds()), "sessions": list})
 }
 
 func (a *API) forget(w http.ResponseWriter, r *http.Request) {

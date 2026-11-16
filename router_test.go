@@ -495,11 +495,11 @@ func TestRouteOrder(t *testing.T) {
 		user, hdr, host string
 		want            Selection
 	}{
-		{"de_s", "", "a.example.co.uk", Selection{"de", "s"}},
-		{"de", "jp", "x.com", Selection{"jp", "port|jp"}},
-		{"", "", "www.example.co.uk", Selection{"gb", "port|gb"}},
-		{"default_z", "", "x.com", Selection{"us", "z"}},
-		{"", "", "x.com", Selection{"us", "port|us"}},
+		{"de_s", "", "a.example.co.uk", Selection{Exit: "de", Session: "s"}},
+		{"de", "jp", "x.com", Selection{Exit: "jp", Session: "port|jp"}},
+		{"", "", "www.example.co.uk", Selection{Exit: "gb", Session: "port|gb"}},
+		{"default_z", "", "x.com", Selection{Exit: "us", Session: "z"}},
+		{"", "", "x.com", Selection{Exit: "us", Session: "port|us"}},
 	}
 	for _, c := range cases {
 		if got := s.route(c.user, c.user != "", c.hdr, "", c.host); got != c.want {

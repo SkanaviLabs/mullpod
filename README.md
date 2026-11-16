@@ -16,6 +16,7 @@ on it for strict isolation. See [Network isolation](#network-isolation) for deta
   - [curl and scripts](#curl-and-scripts)
   - [Sessions](#sessions)
   - [Browsers](#browsers)
+  - [Crawlers and parallel workers](#crawlers-and-parallel-workers)
   - [Ports](#ports-loopback-by-default-every-port-speaks-http-and-socks5)
   - [Control API](#control-api)
 - [What it is](#what-it-is)
@@ -105,7 +106,9 @@ curl -x http://de_job:x@127.0.0.1:8090 …              # → a German server: s
 ```
 
 - **Idle timeout:** a session is forgotten after 10 min idle (`sticky.ttl`), or at once with
-  `/forget?session=job` (GET or POST).
+  `POST /forget?session=job`. A session with an open connection never expires; its idle
+  time starts when its last connection closes, so long keep-alive connections keep their
+  server.
 - **If the current server fails:** the next request with a broad exit moves the session to
   a healthy server. An exact server name always uses its server.
 - **Fixed ports** (8081–8084, commented out in `config.yaml` by default) have a built-in
@@ -164,16 +167,50 @@ are rejected, because Mullvad's exit proxies have no auth. Restart after editing
 `make verify` and `make smoke` read the ports from the running instance. Without
 `PROXY_PASSWORD`, mullpod warns at startup for every port on a non-loopback address.
 
+### Crawlers and parallel workers
+
+A target that rate-limits per IP can be spread over many exits. What matters most:
+
+- **Wait for `/health` to return 200** before starting. Until the tunnel is up the proxy
+  answers every request with an error straight away.
+- **Use keep-alive.** Through a proxy, every new connection pays for a `CONNECT`, a hop to
+  the exit and a TLS handshake: often over a second, against a fraction of that for a request
+  on an open connection. A client that opens a connection per request is several times slower.
+- **One session per worker** (`any_w1` … `any_wN`, or `us_w1` … for a country), and keep each
+  worker on its own session. Sharing sessions round-robin across workers keeps reopening
+  connections.
+- **Expect a slow first request** on each new session; warm the pool up before measuring.
+- **Rotate on throttling.** A server that a target has been hitting for a while can start
+  getting `429`s. Change that worker's session name (`us_w1` → `us_w1_2`; everything after the
+  first `_` is the session) to move it to a fresh server.
+- **Pace each worker.** A burst rate is not what a target tolerates for hours; measure over a
+  long run.
+
+mullpod sees only the tunnel, not the target: inside an HTTPS `CONNECT` the response is
+encrypted, so `result="ok"` in the logs and metrics means the connection worked, not that the
+target answered `200`. Count status codes in the client. `GET /sessions` shows which server
+each worker is on, without any network traffic.
+
 ### Control API
 
+`GET` endpoints are read-only; changes need `POST`.
+
 ```bash
-curl -s 127.0.0.1:8088/health
+curl -s 127.0.0.1:8088/health                # 200 once the tunnel is up; includes version
 curl -s 127.0.0.1:8088/exits                 # ?servers=1 for hostnames
-curl -s '127.0.0.1:8088/ip?exit=se-sto'      # which IP/server a selector gets
-curl -s '127.0.0.1:8088/forget?session=job42'           # forget a session (GET or POST)
+curl -s '127.0.0.1:8088/ip?exit=se-sto'      # which IP/server a selector gets (live check)
+curl -s '127.0.0.1:8088/ip?session=us_w1'    # a session's IP; takes a full username too
+curl -s 127.0.0.1:8088/sessions              # live sessions: server, open conns, TTL left
+curl -s '127.0.0.1:8088/sessions?name=w1'    # one session (by session name, not username)
+curl -s -XPOST '127.0.0.1:8088/forget?session=job42'   # forget a session
 curl -s 127.0.0.1:8088/metrics
 curl -s -XPOST 127.0.0.1:8088/tunnel/switch  # move the tunnel to another tunnel.entry server
 ```
+
+`/ip` connects to the IP-check URL through the exit, so it takes a second or more. It uses a
+session's current server if it has one, but never creates or moves a session; with an exit
+that doesn't contain the session's server it reports a server from that exit instead
+(`session_live` says whether the session exists). `/sessions` is instant and sends nothing.
 
 Every response through the HTTP proxy carries `X-Mullvad-Server` (on `CONNECT`, in the
 `200` reply). Logs are one JSON line per connection, on stdout.
@@ -385,7 +422,8 @@ curl -s -o /dev/null -w '%{speed_download}\n' -x http://de-fra_t:x@127.0.0.1:809
 
 ## Develop
 
-`make build` writes `bin/mullpod`; `go install github.com/SkanaviLabs/mullpod@latest`
+`make build` writes `bin/mullpod`, stamped with `git describe` (`-version`, `/health`); a
+plain `go build` in a checkout reports `dev-<commit>`; `go install github.com/SkanaviLabs/mullpod@latest`
 installs it into `$GOBIN` instead. The binary still reads `.env` and `config.yaml` from the
 working directory.
 

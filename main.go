@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 	"time"
 )
@@ -25,6 +26,39 @@ import (
 //
 //	go build -ldflags "-X main.version=$(git describe --tags --always --dirty)"
 var version = "dev"
+
+func init() {
+	if version == "dev" {
+		version = buildVersion()
+	}
+}
+
+// buildVersion names a build made without -ldflags from the VCS stamp Go
+// embeds (go build in a git checkout): "dev-<rev12>[-dirty]".
+func buildVersion() string {
+	bi, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "dev"
+	}
+	var rev string
+	var dirty bool
+	for _, s := range bi.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			rev = s.Value
+		case "vcs.modified":
+			dirty = s.Value == "true"
+		}
+	}
+	if rev == "" {
+		return "dev"
+	}
+	v := "dev-" + rev[:min(12, len(rev))]
+	if dirty {
+		v += "-dirty"
+	}
+	return v
+}
 
 // Seams for tests: the real implementations bind ports, open the tunnel and
 // install signal handlers.

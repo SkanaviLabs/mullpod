@@ -138,10 +138,13 @@ func TestAPIExitsRotatePACMetricsSwitch(t *testing.T) {
 	if code, m = getJSON(t, "POST", srv.URL+"/forget?session=s"); m["forgot"] != false {
 		t.Errorf("second forget should have nothing to forget: %v", m)
 	}
-	// GET works the same as POST.
+	// GET is read-only: forgetting needs POST.
 	r.picker.Pick(Selection{Exit: "de", Session: "g"}, nil)
-	if code, m = getJSON(t, "GET", srv.URL+"/forget?session=g"); code != 200 || m["forgot"] != true {
-		t.Errorf("GET forget: %d %v", code, m)
+	if code, _ = getJSON(t, "GET", srv.URL+"/forget?session=g"); code != 405 {
+		t.Errorf("GET forget: %d, want 405", code)
+	}
+	if r.picker.Sessions() != 1 {
+		t.Error("GET forget changed sessions")
 	}
 	_ = first
 
@@ -185,6 +188,49 @@ func TestAPIIP(t *testing.T) {
 	}
 	if code, m = getJSON(t, "GET", srv.URL+"/ip?exit=zz"); code != 400 || m["error"] == nil {
 		t.Errorf("unknown exit: %d %v", code, m)
+	}
+	// GET /ip never creates or moves a session.
+	if n := r.picker.Sessions(); n != 0 {
+		t.Errorf("/ip created %d sessions", n)
+	}
+	r.picker.Pick(Selection{Exit: "de", Session: "w0"}, nil)
+	code, m = getJSON(t, "GET", srv.URL+"/ip?exit=jp&session=w0")
+	if code != 200 || m["server"] != "jp-tyo-wg-001" || m["session_live"] != true {
+		t.Errorf("ip other exit: %d %v", code, m)
+	}
+	if l := r.picker.SessionList("w0"); len(l) != 1 || l[0].Server != "de-fra-wg-001" {
+		t.Errorf("/ip moved the session: %+v", l)
+	}
+	// A full username selects exit and session together.
+	code, m = getJSON(t, "GET", srv.URL+"/ip?session=de_w0")
+	if code != 200 || m["exit"] != "de" || m["session"] != "w0" || m["server"] != "de-fra-wg-001" {
+		t.Errorf("ip username: %d %v", code, m)
+	}
+	if code, _ = getJSON(t, "POST", srv.URL+"/ip"); code != 405 {
+		t.Errorf("POST /ip: %d", code)
+	}
+}
+
+func TestAPISessions(t *testing.T) {
+	r := newRig(t, "de-fra-wg-001")
+	_, _, srv := apiFor(r)
+	defer srv.Close()
+	r.picker.Pick(Selection{Exit: "de", Session: "b"}, nil)
+	r.picker.Pick(Selection{Exit: "de", Session: "a"}, nil)
+	release := r.picker.Hold(Selection{Exit: "de", Session: "a"})
+	defer release()
+
+	code, m := getJSON(t, "GET", srv.URL+"/sessions")
+	list, _ := m["sessions"].([]any)
+	if code != 200 || m["count"] != 2.0 || len(list) != 2 {
+		t.Fatalf("sessions: %d %v", code, m)
+	}
+	a := list[0].(map[string]any)
+	if a["name"] != "a" || a["server"] != "de-fra-wg-001" || a["open_conns"] != 1.0 || a["ttl_left_s"] != -1.0 {
+		t.Errorf("session a: %v", a)
+	}
+	if code, m = getJSON(t, "GET", srv.URL+"/sessions?name=b"); m["count"] != 1.0 {
+		t.Errorf("sessions?name=b: %d %v", code, m)
 	}
 }
 

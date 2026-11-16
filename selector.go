@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +18,9 @@ import (
 type Selection struct {
 	Exit    string
 	Session string
+	// Peek uses the session's current server if it has one, but never
+	// creates, moves or refreshes the session (read-only lookups like GET /ip).
+	Peek bool
 }
 
 const exitCurrent = "current"
@@ -45,8 +49,14 @@ type Picker struct {
 }
 
 type stickyEntry struct {
-	host string
-	last time.Time
+	host  string
+	last  time.Time // when the session was last used: picked, or a connection closed
+	open  int       // connections open through this session; never expires while > 0
+	conns int64     // connections made through this session
+}
+
+func (e *stickyEntry) alive(now time.Time, ttl time.Duration) bool {
+	return e.open > 0 || now.Sub(e.last) < ttl
 }
 
 func NewPicker(cat *Catalog, br *Breaker, aliases map[string][]string, ttl time.Duration, max int) *Picker {
@@ -108,7 +118,7 @@ func (p *Picker) Pick(sel Selection, exclude map[string]bool) (*Relay, error) {
 		}
 		r = exact
 	} else if e := p.sessions[sel.Session]; sel.Session != "" && e != nil &&
-		now.Sub(e.last) < p.ttl && !exclude[e.host] && p.br.Healthy(e.host) {
+		e.alive(now, p.ttl) && !exclude[e.host] && p.br.Healthy(e.host) {
 		for _, c := range cands {
 			if c.Hostname == e.host {
 				r = c
@@ -121,13 +131,46 @@ func (p *Picker) Pick(sel Selection, exclude map[string]bool) (*Relay, error) {
 			return nil, fmt.Errorf("%w %q", errNoExit, sel.Exit)
 		}
 	}
-	if sel.Session != "" {
-		p.sessions[sel.Session] = &stickyEntry{host: r.Hostname, last: now}
-		if len(p.sessions) > p.max {
-			p.evictOldest()
+	if sel.Session != "" && !sel.Peek {
+		// Update in place so a session that moves keeps its open-connection count.
+		if e := p.sessions[sel.Session]; e != nil {
+			e.host, e.last = r.Hostname, now
+		} else {
+			p.sessions[sel.Session] = &stickyEntry{host: r.Hostname, last: now}
+			if len(p.sessions) > p.max {
+				p.evictOldest()
+			}
 		}
 	}
 	return r, nil
+}
+
+// Hold records an open connection through sel's session and returns the
+// function to call when it closes. A session doesn't expire while it has
+// open connections, and its idle time counts from when the last one closed.
+func (p *Picker) Hold(sel Selection) (release func()) {
+	if sel.Session == "" || sel.Peek {
+		return func() {}
+	}
+	p.mu.Lock()
+	e := p.sessions[sel.Session]
+	if e != nil {
+		e.open++
+		e.conns++
+	}
+	p.mu.Unlock()
+	if e == nil {
+		return func() {}
+	}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			p.mu.Lock()
+			e.open--
+			e.last = time.Now()
+			p.mu.Unlock()
+		})
+	}
 }
 
 // roundRobin walks the candidates round-robin from a per-selector cursor. If every
@@ -156,15 +199,24 @@ func (p *Picker) roundRobin(exit string, cands []*Relay, exclude map[string]bool
 	return fallback
 }
 
+// evictOldest drops the least recently used session, preferring one with no
+// open connections.
 func (p *Picker) evictOldest() {
 	var oldK string
-	var oldT time.Time
+	var old *stickyEntry
 	for k, e := range p.sessions {
-		if oldK == "" || e.last.Before(oldT) {
-			oldK, oldT = k, e.last
+		if old == nil || evictBefore(e, old) {
+			oldK, old = k, e
 		}
 	}
 	delete(p.sessions, oldK)
+}
+
+func evictBefore(a, b *stickyEntry) bool {
+	if idleA, idleB := a.open == 0, b.open == 0; idleA != idleB {
+		return idleA
+	}
+	return a.last.Before(b.last)
 }
 
 // Forget drops a session's current server, so its next request picks anew.
@@ -181,14 +233,56 @@ func (p *Picker) Sweep() {
 	defer p.mu.Unlock()
 	now := time.Now()
 	for k, e := range p.sessions {
-		if now.Sub(e.last) >= p.ttl {
+		if !e.alive(now, p.ttl) {
 			delete(p.sessions, k)
 		}
 	}
 }
 
+// Sessions counts live sessions: with open connections or used within the TTL.
 func (p *Picker) Sessions() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return len(p.sessions)
+	now := time.Now()
+	n := 0
+	for _, e := range p.sessions {
+		if e.alive(now, p.ttl) {
+			n++
+		}
+	}
+	return n
+}
+
+// SessionInfo describes one live session, for GET /sessions.
+type SessionInfo struct {
+	Name     string    `json:"name"`
+	Server   string    `json:"server"`
+	Open     int       `json:"open_conns"`
+	Conns    int64     `json:"conns"`
+	LastUsed time.Time `json:"last_used"`
+	IdleS    int       `json:"idle_s"`
+	// TTLLeftS is how long until the session expires; -1 while it has open connections.
+	TTLLeftS int `json:"ttl_left_s"`
+}
+
+// SessionList returns live sessions sorted by name; name != "" returns just that one.
+func (p *Picker) SessionList(name string) []SessionInfo {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	now := time.Now()
+	out := []SessionInfo{}
+	for k, e := range p.sessions {
+		if (name != "" && k != name) || !e.alive(now, p.ttl) {
+			continue
+		}
+		idle := now.Sub(e.last)
+		left := -1
+		if e.open == 0 {
+			left = int((p.ttl - idle).Seconds())
+		}
+		out = append(out, SessionInfo{Name: k, Server: e.host, Open: e.open, Conns: e.conns,
+			LastUsed: e.last.UTC().Truncate(time.Second), IdleS: int(idle.Seconds()), TTLLeftS: left})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
 }

@@ -352,7 +352,7 @@ func TestSOCKSUnsupportedCommandAndIPv6(t *testing.T) {
 func TestRouteSessionHeaderAndImplicit(t *testing.T) {
 	cfg := defaultConfig()
 	s := &Server{cfg: cfg, ln: Listener{}}
-	if got := s.route("de", true, "", "hdr", "x.com"); got != (Selection{"de", "hdr"}) {
+	if got := s.route("de", true, "", "hdr", "x.com"); got != (Selection{Exit: "de", Session: "hdr"}) {
 		t.Errorf("X-Session: %+v", got)
 	}
 	if got := s.route("de_u", true, "", "hdr", "x.com"); got.Session != "u" {

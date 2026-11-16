@@ -63,3 +63,38 @@ func TestStickyExpiryAndCap(t *testing.T) {
 		t.Errorf("rotation after expiry used %v", seen)
 	}
 }
+
+// A session with an open connection outlives its TTL, keeps its server,
+// isn't evicted for a new one, and its idle time starts when it closes.
+func TestStickyHeldByOpenConnection(t *testing.T) {
+	r := newRig(t, "se-sto-wg-001", "se-sto-wg-002", "se-sto-wg-003")
+	pk := NewPicker(r.cat, r.br, nil, 60*time.Millisecond, 1)
+	first, _ := pk.Pick(Selection{Exit: "se", Session: "w0"}, nil)
+	release := pk.Hold(Selection{Exit: "se", Session: "w0"})
+	pk.Pick(Selection{Exit: "se", Session: "other"}, nil) // over the cap of 1
+	time.Sleep(100 * time.Millisecond)
+	pk.Sweep()
+	if l := pk.SessionList("w0"); len(l) != 1 || l[0].Open != 1 || l[0].Conns != 1 {
+		t.Fatalf("held session swept or evicted: %+v", l)
+	}
+	for i := 0; i < 4; i++ {
+		if x, _ := pk.Pick(Selection{Exit: "se", Session: "w0"}, nil); x.Hostname != first.Hostname {
+			t.Fatalf("held session moved: %s → %s", first.Hostname, x.Hostname)
+		}
+	}
+	release()
+	release() // idempotent
+	if l := pk.SessionList("w0"); len(l) != 1 || l[0].Open != 0 || l[0].TTLLeftS < 0 {
+		t.Errorf("after close: %+v", l)
+	}
+	time.Sleep(100 * time.Millisecond)
+	pk.Sweep()
+	if n := pk.Sessions(); n != 0 {
+		t.Errorf("after close + TTL: %d sessions", n)
+	}
+	// Peek never records a session.
+	pk.Pick(Selection{Exit: "se", Session: "peek", Peek: true}, nil)
+	if n := pk.Sessions(); n != 0 {
+		t.Errorf("peek created a session")
+	}
+}

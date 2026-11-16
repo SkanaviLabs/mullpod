@@ -98,3 +98,22 @@ func TestViaRelayResolveError(t *testing.T) {
 }
 
 // ---- socks5 helpers ----
+
+// heldConn releases its session once, however it is closed, and half-closes
+// when the underlying connection can.
+func TestHeldConnRelease(t *testing.T) {
+	n := 0
+	a, b := net.Pipe() // net.Pipe can't half-close: CloseWrite closes fully
+	defer b.Close()
+	c := &heldConn{Conn: a, release: func() { n++ }}
+	if err := c.CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+	if n != 1 {
+		t.Errorf("released %d times", n)
+	}
+	// A session forgotten (or never recorded) has nothing to hold.
+	r := newRig(t, "se-sto-wg-001")
+	r.picker.Hold(Selection{Exit: "se", Session: "gone"})()
+}
