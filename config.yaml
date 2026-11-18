@@ -88,6 +88,13 @@ tunnel:
 # dial_timeout: max time for one outbound connection, including the SOCKS handshake.
 dial_timeout: 15s
 
+# idle_timeout: close a relayed connection (CONNECT, SOCKS5 or plain HTTP) after
+# this long with no bytes in either direction. Transfers that keep moving are never
+# cut, however long they take. It ends tunnels left open by a dead exit or a stuck
+# client, which would otherwise also keep their session pinned to one server.
+# 0s = off (connections stay open until one side closes them).
+idle_timeout: 10m
+
 # breaker: how long a failing exit is benched. base doubles on each consecutive
 # failure, up to max.
 breaker:

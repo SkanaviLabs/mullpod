@@ -108,7 +108,8 @@ curl -x http://de_job:x@127.0.0.1:8090 …              # → a German server: s
 - **Idle timeout:** a session is forgotten after 10 min idle (`sticky.ttl`), or at once with
   `POST /forget?session=job`. A session with an open connection never expires; its idle
   time starts when its last connection closes, so long keep-alive connections keep their
-  server.
+  server. A connection that moves no bytes for `idle_timeout` (default 10 min) is closed,
+  so an abandoned one can't pin a session forever.
 - **If the current server fails:** the next request with a broad exit moves the session to
   a healthy server. An exact server name always uses its server.
 - **Fixed ports** (8081–8084, commented out in `config.yaml` by default) have a built-in
@@ -214,7 +215,9 @@ that doesn't contain the session's server it reports a server from that exit ins
 (`session_live` says whether the session exists). `/sessions` is instant and sends nothing.
 
 Every response through the HTTP proxy carries `X-Mullvad-Server` (on `CONNECT`, in the
-`200` reply). Logs are one JSON line per connection, on stdout.
+`200` reply). Logs are one JSON line per connection, on stdout; `-log <file>` also appends
+them to a file. Each line has `ms` (how long the connection was open) and `dial_ms` (how long
+reaching the target through the exit took).
 
 ## What it is
 
@@ -364,6 +367,15 @@ Needs Go (`brew install go`).
    make verify
    ```
 
+**Running it in the background:** run it under a service manager rather than a terminal, so
+it restarts if it ever exits and keeps a log you can read afterwards. Fill in the paths in
+[dist/mullpod.plist](dist/mullpod.plist) (macOS launchd) or
+[dist/mullpod.service](dist/mullpod.service) (Linux systemd); each file has its install
+commands at the top. Both run `bin/mullpod -log data/mullpod.log`. If you do run it from a
+terminal with a pipe (`./bin/mullpod | tee …`), add `-log`: the file keeps the log if the
+terminal or `tee` goes away. mullpod logs `signal received`, `shutting down` and `stopped`
+lines whenever it exits normally, and crash output goes to the `-log` file.
+
 **`.env` vs `config.yaml`:**
 - **`.env`** holds only secrets and settings specific to your Mullvad device:
   `WIREGUARD_PRIVATE_KEY`, `WIREGUARD_ADDRESSES`, and the optional `PROXY_PASSWORD`.
@@ -386,7 +398,8 @@ firewall ask again.
 ## Config
 
 [config.yaml](config.yaml) sets the listeners (each with its own bind address), default
-exit, aliases, per-domain rules, sticky TTL and breaker. It's read at startup, so restart
+exit, aliases, per-domain rules, sticky TTL, breaker and timeouts (`dial_timeout`,
+`idle_timeout`). It's read at startup, so restart
 the process after editing.
 
 ## Speed

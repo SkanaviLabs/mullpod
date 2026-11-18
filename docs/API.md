@@ -120,18 +120,22 @@ target's status codes. A `429` from the target reaches the client unchanged and 
 
 ### Connection log
 
-One JSON line per connection on stdout:
+One JSON line per connection on stdout (and in the `-log` file, if set), written when the
+connection closes:
 
 ```json
 {"time":"…","level":"INFO","msg":"conn","listener":"main","proto":"http-connect",
  "client":"127.0.0.1:53412","target":"am.i.mullvad.net:443","exit":"us","session":"w0",
- "server":"us-dal-wg-701","ms":30012,"sent":1834,"recv":9120}
+ "server":"us-dal-wg-701","ms":30012,"dial_ms":412,"sent":1834,"recv":9120}
 ```
 
 `proto` is `http-connect`, `http` or `socks5`. `ms` is how long the connection was open,
-not request latency: a keep-alive connection carries many requests. On failure the line has
-`level` `INFO` with an `err` field, and the connection counts as `result="error"` in
-[`/metrics`](#get-metrics).
+not request latency: a keep-alive connection carries many requests and sits idle between
+them. `dial_ms` is how long reaching the target through the exit took (the exit's SOCKS
+handshake and the TCP connect to the target); a slow exit shows here. On failure the line
+has `level` `INFO` with an `err` field, and the connection counts as `result="error"` in
+[`/metrics`](#get-metrics). `err: "idle timeout"` means mullpod closed the connection after
+`idle_timeout` with no bytes in either direction.
 
 ---
 

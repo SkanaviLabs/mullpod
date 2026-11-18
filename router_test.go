@@ -74,7 +74,7 @@ func (f *fakeExit) serve(c net.Conn) {
 		return
 	}
 	socksReply(c, 0)
-	splice(c, c, up)
+	splice(c, c, up, 0)
 }
 
 func (f *fakeExit) addr() string { return f.ln.Addr().String() }

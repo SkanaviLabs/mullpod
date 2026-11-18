@@ -1,0 +1,24 @@
+# systemd user unit for mullpod (Linux). Restarts it whenever it exits.
+#
+# Replace /path/to/mullpod with the checkout (or install) directory, then:
+#   mkdir -p ~/.config/systemd/user
+#   cp dist/mullpod.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now mullpod
+#   loginctl enable-linger "$USER"     # keep it running after you log out
+# Logs: data/mullpod.log, or journalctl --user -u mullpod
+# Restart after editing config.yaml: systemctl --user restart mullpod
+
+[Unit]
+Description=mullpod multi-exit Mullvad proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/path/to/mullpod
+ExecStart=/path/to/mullpod/bin/mullpod -log data/mullpod.log
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

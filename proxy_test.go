@@ -247,7 +247,7 @@ func TestServeSOCKSReplyWriteError(t *testing.T) {
 }
 
 func TestSpliceWithoutCloseWrite(t *testing.T) {
-	sent, recv := splice(nopConn{}, nopConn{}, nopConn{})
+	sent, recv, _ := splice(nopConn{}, nopConn{}, nopConn{}, 0)
 	if sent != 0 || recv != 0 {
 		t.Errorf("splice copied %d/%d", sent, recv)
 	}

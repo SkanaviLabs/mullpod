@@ -14,6 +14,35 @@ Each entry starts with the part of mullpod it changes:
 
 ## [Unreleased]
 
+### Added
+
+- **Proxy:** `idle_timeout` (default `10m`): a `CONNECT`, SOCKS5 or plain-HTTP connection
+  with no bytes in either direction for that long is closed and logged with
+  `err: "idle timeout"`. A dead exit or a stalled client no longer keeps a tunnel open
+  forever and its session pinned to one server (an open connection keeps a session
+  alive). Busy and slow-but-steady transfers are not affected; `0` turns it off.
+- **Logging:** `dial_ms` on every connection line: how long reaching the target through
+  the exit took, separate from `ms` (how long the connection stayed open).
+- **Logging:** `-log <file>` also appends the log to a file. The file keeps the log when
+  stdout goes away, and unrecovered panics and fatal runtime errors are written there too.
+- **Logging:** `signal received` (with the signal), `shutting down` (with the reason and
+  open connections) and `stopped` (with the exit code) lines, and the process ID on
+  `starting`, so every exit leaves a record.
+- **Build:** service files for running mullpod in the background with automatic restart:
+  [dist/mullpod.plist](dist/mullpod.plist) (macOS launchd) and
+  [dist/mullpod.service](dist/mullpod.service) (systemd user unit).
+
+### Fixed
+
+- **Logging:** mullpod no longer dies silently when its stdout or stderr is a pipe whose
+  reader goes away (a closed terminal, a killed `| tee`): writes fail instead, a warning
+  is logged once, and the proxy keeps running. Before, Go's default `SIGPIPE` handling
+  ended the process on the next log line with nothing recorded.
+- **Proxy:** `SIGHUP` (the terminal closing) now shuts down cleanly and is logged, like
+  `SIGINT` and `SIGTERM`.
+- **Proxy:** a panic while handling one connection is logged with its stack trace and
+  closes only that connection, instead of ending the process.
+
 ## [1.1.0] - 2026-11-16
 
 ### Changed

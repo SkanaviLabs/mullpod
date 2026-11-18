@@ -48,6 +48,9 @@ type Config struct {
 	TunnelProbe string     `yaml:"tunnel_probe"`
 	IPCheckURL  string     `yaml:"ip_check_url"`
 	DialTimeout Duration   `yaml:"dial_timeout"`
+	// IdleTimeout closes a relayed connection after this long with no bytes in
+	// either direction; 0 keeps it open until one side closes it.
+	IdleTimeout Duration `yaml:"idle_timeout"`
 
 	Sticky struct {
 		TTL      Duration `yaml:"ttl"`
@@ -100,6 +103,7 @@ func defaultConfig() *Config {
 		TunnelProbe: "10.64.0.1:1080",
 		IPCheckURL:  "https://am.i.mullvad.net/json",
 		DialTimeout: Duration{15 * time.Second},
+		IdleTimeout: Duration{10 * time.Minute},
 	}
 	c.Sticky.TTL = Duration{10 * time.Minute}
 	c.Sticky.Max = 10000

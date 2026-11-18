@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd agent for mullpod (macOS). Restarts it whenever it exits.
+
+  Replace /path/to/mullpod with the checkout (or install) directory, then:
+    cp dist/mullpod.plist ~/Library/LaunchAgents/mullpod.plist
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/mullpod.plist
+  Stop / unload:
+    launchctl bootout gui/$(id -u)/mullpod
+  Restart after editing config.yaml:
+    launchctl kickstart -k gui/$(id -u)/mullpod
+
+  The log is data/mullpod.log (-log), including crash output. stdout would
+  repeat it, so it goes to /dev/null; stderr keeps anything printed before the
+  log file opens (bad flags).
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>mullpod</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/path/to/mullpod/bin/mullpod</string>
+    <string>-log</string>
+    <string>data/mullpod.log</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/path/to/mullpod</string>
+  <key>StandardOutPath</key>
+  <string>/dev/null</string>
+  <key>StandardErrorPath</key>
+  <string>/path/to/mullpod/data/mullpod.stderr.log</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>

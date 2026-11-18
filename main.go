@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime/debug"
 	"syscall"
 	"time"
@@ -66,7 +67,7 @@ var (
 	newTunnel = NewTunnel
 	listen    = net.Listen
 	newSignal = func() (context.Context, context.CancelFunc) {
-		return signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		return notifyContext(syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	}
 	exit      = os.Exit
 	sweepTick = time.Minute
@@ -82,6 +83,7 @@ func cli(args []string, stdout, stderr io.Writer) int {
 	envPath := fs.String("env", ".env", "secrets file: WIREGUARD_PRIVATE_KEY, WIREGUARD_ADDRESSES, PROXY_PASSWORD")
 	showVersion := fs.Bool("version", false, "print version, copyright and license, then exit")
 	showLicenses := fs.Bool("licenses", false, "print copyright and license notices (including third-party), then exit")
+	logPath := fs.String("log", "", "also append the JSON log to this file; it keeps logging when stdout goes away, and crash output (panics, fatal runtime errors) is written there too")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -102,15 +104,93 @@ func cli(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	slog.SetDefault(slog.New(slog.NewJSONHandler(stdout, nil)))
-	slog.Info("starting", "version", version)
+	out, closeLog, err := openLog(*logPath, stdout)
+	if err != nil {
+		fmt.Fprintf(stderr, "mullpod: -log: %v\n", err)
+		return 1
+	}
+	defer closeLog()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(out, nil)))
+	ignoreSIGPIPE()
+	slog.Info("starting", "version", version, "pid", os.Getpid())
 	ctx, stop := newSignal()
 	defer stop()
 	if err := serve(ctx, *cfgPath, *envPath); err != nil {
 		slog.Error("mullpod", "err", err.Error())
+		slog.Info("stopped", "code", 1)
 		return 1
 	}
+	slog.Info("stopped", "code", 0)
 	return 0
+}
+
+// openLog returns where the log goes: stdout alone, or with path set, the file
+// first and then stdout. Losing stdout (a closed terminal, a dead tee) then
+// costs only the copy on stdout. Unrecovered panics and fatal runtime errors are
+// also written to the file, since stderr may be gone too.
+func openLog(path string, stdout io.Writer) (io.Writer, func(), error) {
+	if path == "" {
+		return stdout, func() {}, nil
+	}
+	if dir := filepath.Dir(path); dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, nil, err
+		}
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := setCrashOutput(f); err != nil {
+		f.Close()
+		return nil, nil, err
+	}
+	return &logWriter{file: f, stdout: stdout}, func() { setCrashOutput(nil); f.Close() }, nil
+}
+
+var setCrashOutput = func(f *os.File) error { return debug.SetCrashOutput(f, debug.CrashOptions{}) }
+
+// logWriter writes each log line to the file, then to stdout; a stdout error
+// is ignored so the file keeps the full log.
+type logWriter struct {
+	file   io.Writer
+	stdout io.Writer
+}
+
+func (w *logWriter) Write(p []byte) (int, error) {
+	n, err := w.file.Write(p)
+	w.stdout.Write(p)
+	return n, err
+}
+
+// ignoreSIGPIPE stops a write to a broken stdout or stderr pipe from killing
+// the process (Go's default for fds 1 and 2): the write fails with EPIPE
+// instead, and the first such failure is logged.
+func ignoreSIGPIPE() {
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGPIPE)
+	go func() {
+		<-ch
+		slog.Warn("stdout or stderr is a broken pipe; continuing (use -log to keep a log)")
+		for range ch {
+		}
+	}()
+}
+
+// notifyContext is canceled by the first of sigs, and logs which one arrived.
+func notifyContext(sigs ...os.Signal) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.Background())
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, sigs...)
+	go func() {
+		select {
+		case s := <-ch:
+			slog.Info("signal received", "signal", s.String())
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	return ctx, func() { signal.Stop(ch); cancel() }
 }
 
 // serve loads the configuration and runs until ctx is canceled or a fatal
@@ -138,6 +218,9 @@ func serve(ctx context.Context, cfgPath, envPath string) error {
 	cat := NewCatalog(tun.LookupHost)
 	br := NewBreaker(cfg.Breaker.Base.Duration, cfg.Breaker.Max.Duration)
 	pk := NewPicker(cat, br, cfg.Aliases, cfg.Sticky.TTL.Duration, cfg.Sticky.Max)
+	if cfg.IdleTimeout.Duration <= 0 {
+		slog.Warn("idle_timeout is off: idle tunnels stay open until a side closes them")
+	}
 	d := &Dialer{cat: cat, picker: pk, br: br, net: tun, timeout: cfg.DialTimeout.Duration, ready: tun.Ready}
 	m := &Metrics{}
 
@@ -205,11 +288,13 @@ func serve(ctx context.Context, cfgPath, envPath string) error {
 	slog.Info("api listening", "addr", cfg.API)
 
 	var runErr error
+	reason := "signal"
 	select {
 	case <-ctx.Done():
 	case runErr = <-fatal:
+		reason = "fatal error"
 	}
-	slog.Info("shutting down")
+	slog.Info("shutting down", "reason", reason, "active_conns", m.active.Load())
 	sctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	hs.Shutdown(sctx)
